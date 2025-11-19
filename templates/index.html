@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8" />
+  <title>BKV realtime</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { height: 100%; }
+    #controls {
+      position: absolute; top: 10px; left: 10px; z-index: 1000;
+      background: rgba(255,255,255,0.95); padding: 10px; border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.2); font-family: Arial, sans-serif;
+    }
+    select, button, label { width: 220px; margin: 4px 0; }
+    .small { font-size: 12px; color: #666; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <div><b>Szűrők</b></div>
+    <label>Viszonylat:</label>
+    <select id="routeFilter"></select>
+
+    <label>Típus:</label>
+    <select id="typeFilter"></select>
+
+    <label>Rendszám:</label>
+    <select id="plateFilter"></select>
+
+    <button id="refreshBtn">Frissítés</button>
+    <label class="small"><input type="checkbox" id="autoRefresh" checked> Automatikus frissítés (5 mp)</label>
+    <div class="small" id="status"></div>
+  </div>
+
+  <div id="map"></div>
+
+  <script>
+    const map = L.map('map').setView([47.4979, 19.0402], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+
+    let markers = [];
+
+    // --- ikonok pontos elérési úttal ---
+    const ICONS = {
+      bus: "/icons/busz.png.png",
+      trolley: "/icons/trolibusz.png.png",
+      tram: "/icons/villamos.png.png",
+      hev: "/icons/hév.png.png"
+    };
+
+    function makeIcon(url) {
+      return L.icon({ iconUrl: url, iconSize: [32, 32], iconAnchor: [16, 16] });
+    }
+
+    function detectMode(v) {
+      const model = (v.vehicle_model || "").toLowerCase();
+      const route = (v.route_id || "").toLowerCase();
+
+      if (route.startsWith("h")) return "hev";
+      if (model.includes("troli") || model.includes("trollino")) return "trolley";
+      if (model.includes("villamos") || model.includes("tram") || model.includes("caf") || model.includes("combino"))
+        return "tram";
+      return "bus";
+    }
+
+    function iconFor(v) {
+      const mode = detectMode(v);
+      const url = ICONS[mode];
+      return url ? makeIcon(url) : new L.Icon.Default();
+    }
+
+    function fillSelect(select, values, keepValue) {
+      const prev = keepValue ? select.value : "";
+      select.innerHTML = "";
+      const optAll = document.createElement("option");
+      optAll.value = "";
+      optAll.textContent = "Összes";
+      select.appendChild(optAll);
+      values.forEach(v => {
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent = v;
+        select.appendChild(opt);
+      });
+      if (keepValue && [...select.options].some(o => o.value === prev)) {
+        select.value = prev;
+      }
+    }
+
+    async function fetchVehicles() {
+      const status = document.getElementById("status");
+      status.textContent = "Betöltés…";
+      const res = await fetch("/vehicles", { cache: "no-store" });
+      const data = await res.json();
+      status.textContent = `Járművek: ${data.length}`;
+      return data;
+    }
+
+    function uniqueSorted(arr) {
+      return [...new Set(arr.filter(v => v && v !== "N/A"))].sort((a,b) => (""+a).localeCompare(""+b, 'hu'));
+    }
+
+    async function refreshData() {
+      const vehicles = await fetchVehicles();
+
+      const routes = uniqueSorted(vehicles.map(v => v.route_id));
+      const types  = uniqueSorted(vehicles.map(v => v.vehicle_model));
+      const plates = uniqueSorted(vehicles.map(v => v.license_plate));
+
+      fillSelect(document.getElementById("routeFilter"), routes, true);
+      fillSelect(document.getElementById("typeFilter"),  types,  true);
+      fillSelect(document.getElementById("plateFilter"), plates, true);
+
+      const routeSel = document.getElementById("routeFilter").value;
+      const typeSel  = document.getElementById("typeFilter").value;
+      const plateSel = document.getElementById("plateFilter").value;
+
+      markers.forEach(m => map.removeLayer(m));
+      markers = [];
+
+      vehicles.forEach(v => {
+        if (routeSel && v.route_id !== routeSel) return;
+        if (typeSel  && v.vehicle_model !== typeSel) return;
+        if (plateSel && v.license_plate !== plateSel) return;
+
+        const popup = `
+          <b>Viszonylat:</b> ${v.route_id}<br>
+          <b>Célállomás:</b> ${v.destination}<br>
+          <b>Rendszám:</b> ${v.license_plate}<br>
+          <b>Típus:</b> ${v.vehicle_model}
+        `;
+        const marker = L.marker([v.latitude, v.longitude], { icon: iconFor(v) }).bindPopup(popup);
+        markers.push(marker);
+        marker.addTo(map);
+      });
+    }
+
+    document.getElementById("refreshBtn").addEventListener("click", refreshData);
+    document.getElementById("routeFilter").addEventListener("change", refreshData);
+    document.getElementById("typeFilter").addEventListener("change", refreshData);
+    document.getElementById("plateFilter").addEventListener("change", refreshData);
+
+    refreshData();
+
+    // 🔁 Automatikus frissítés 5 másodpercenként
+    setInterval(() => {
+      if (document.getElementById("autoRefresh").checked) {
+        refreshData();
+      }
+    }, 5000);
+  </script>
+</body>
+</html>
