@@ -20,126 +20,136 @@
 </head>
 <body>
 
-  <div id="controls">
-    <div><b>Szűrők</b></div>
+<div id="controls">
+  <div><b>Szűrők</b></div>
 
-    <label>Viszonylat:</label>
-    <select id="routeFilter"></select>
+  <label>Viszonylat:</label>
+  <select id="routeFilter"></select>
 
-    <label>Típus:</label>
-    <select id="typeFilter"></select>
+  <label>Típus:</label>
+  <select id="typeFilter"></select>
 
-    <label>Rendszám:</label>
-    <select id="plateFilter"></select>
+  <label>Rendszám:</label>
+  <select id="plateFilter"></select>
 
-    <button id="refreshBtn">Frissítés</button>
+  <button id="refreshBtn">Frissítés</button>
 
-    <label class="small"><input type="checkbox" id="autoRefresh" checked> Automatikus frissítés (5 mp)</label>
+  <label class="small"><input type="checkbox" id="autoRefresh" checked> Automatikus frissítés (5 mp)</label>
 
-    <!-- 🔥 Feldíszített járművek opció -->
-    <label class="small"><input type="checkbox" id="decorFilter"> 🎄 Csak feldíszített járművek</label>
+  <!-- 🎄 Díszített járművek kapcsoló -->
+  <label class="small"><input type="checkbox" id="decorFilter"> 🎄 Csak feldíszített járművek</label>
 
-    <div class="small" id="status"></div>
-  </div>
-
-
-  <div id="map"></div>
-
-  <script>
-    const map = L.map('map').setView([47.4979, 19.0402], 12);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
-
-    let markers = [];
-
-    /* 🔥 IKONOK – ezeknek létezni kell az /icons/ könyvtárban! */
-    const ICONS = {
-      bus: "/icons/busz.png.png",
-      trolley: "/icons/trolibusz.png.png",
-      tram: "/icons/villamos.png.png",
-      hev: "/icons/hév.png.png"
-    };
-
-    /* 🎄 Feldíszített járművek LISTA */
-    const DECORATED = ["V1347","V1608","V1441","V2038","V3873","V3888","V4012","V4120","V4064","JARMU1","BPI829","T9100"];
+  <div class="small" id="status"></div>
+</div>
 
 
-    /* 🔥🚋 Villamosok felismerése helyesen */
-    function detectMode(v) {
-      const model = (v.vehicle_model || "").toLowerCase();
-      const route = (v.route_id || "").toLowerCase();
+<div id="map"></div>
 
-      if (route.startsWith("h")) return "hev"; // HÉV külön marad
-      if (model.includes("trol") || model.includes("trollino")) return "trolley";
+<script>
+  const map = L.map('map').setView([47.4979, 19.0402], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
 
-      /* ❗ Mostantól ezek mind villamosnak számítanak */
-      if (
-        model.includes("villamos") || model.includes("tram") ||
-        model.includes("caf") || model.includes("combino") ||
-        model.includes("tatra") || model.includes("tátra") ||
-        model.includes("tw6000") ||
-        model.includes("ganz") || model.includes("ipari") ||
-        model.includes("csuklós") || model.includes("kcsv7")
-      ) return "tram";
+  let markers = [];
 
-      return "bus"; // minden más busz
-    }
+  /* --- Ikonok (létezniük kell az icons mappában) --- */
+  const ICONS = {
+    bus: "/icons/busz.png.png",
+    tram: "/icons/villamos.png.png",
+    trolley: "/icons/trolibusz.png.png",
+    hev: "/icons/hév.png.png"
+  };
+
+  /* 🎄 Díszített járművek rendszám alapján */
+  const DECORATED = ["V1347","V1608","V1441","V2038","V3873","V3888","V4012","V4120","V4064","JARMU1","BPI829","T9100"];
 
 
-    function makeIcon(url){ return L.icon({ iconUrl:url, iconSize:[32,32], iconAnchor:[16,16] }); }
-    function iconFor(v){ return makeIcon(ICONS[detectMode(v)]); }
+  /* -----------------------------  
+      🔥 Járműkategória felismerés  
+      Csak a villamos kap villamos ikont  
+  -----------------------------*/
+  function detectMode(v) {
+    const model = (v.vehicle_model || "").toLowerCase();
+    const route = (v.route_id || "").toLowerCase();
+
+    /* HÉV külön */
+    if (route.startsWith("h")) return "hev";
+
+    /* Trolibusz */
+    if (model.includes("trol") || model.includes("trollino")) return "trolley";
+
+    /* 🚋 VILLAMOS — MIND csak villamos ikont kap */
+    if (
+      model.includes("villamos") || model.includes("tram") ||
+      model.includes("caf") || model.includes("combino") ||
+      model.includes("tatra") || model.includes("tátra") ||
+      model.includes("tw6000") ||
+      model.includes("ganz") || model.includes("ipari") ||
+      model.includes("csuklós") || model.includes("kcsv7")
+    ) return "tram";
+
+    /* ❗ minden más BUSZ */
+    return "bus";
+  }
 
 
-    /* --- Adatbetöltés --- */
-    async function fetchVehicles(){
-      document.getElementById("status").textContent="Betöltés…";
-      const data = await (await fetch("/vehicles",{cache:"no-store"})).json();
-      document.getElementById("status").textContent=`Járművek: ${data.length}`;
-      return data;
-    }
-
-    function uniqueSorted(arr){ return [...new Set(arr.filter(v=>v&&v!=="N/A"))].sort(); }
+  function makeIcon(url){ return L.icon({ iconUrl:url, iconSize:[32,32], iconAnchor:[16,16] }); }
+  function iconFor(v){ return makeIcon(ICONS[detectMode(v)]); }
 
 
-    /* --- Térkép frissítés --- */
-    async function refreshData(){
-      const vehicles = await fetchVehicles();
+  async function fetchVehicles(){
+    document.getElementById("status").textContent="Betöltés…";
+    const data = await (await fetch("/vehicles",{cache:"no-store"})).json();
+    document.getElementById("status").textContent=`Járművek: ${data.length}`;
+    return data;
+  }
 
-      fillSelect(routeFilter, uniqueSorted(vehicles.map(v=>v.route_id)), true);
-      fillSelect(typeFilter,  uniqueSorted(vehicles.map(v=>v.vehicle_model)), true);
-      fillSelect(plateFilter, uniqueSorted(vehicles.map(v=>v.license_plate)), true);
+  function uniqueSorted(arr){ return [...new Set(arr.filter(v=>v&&v!=="N/A"))].sort(); }
 
-      markers.forEach(m=>map.removeLayer(m)); markers=[];
 
-      const r=routeFilter.value, t=typeFilter.value, p=plateFilter.value, d=decorFilter.checked;
+  /* -----------------------------
+      🔄 Térkép frissítés
+  -----------------------------*/
+  async function refreshData(){
+    const vehicles = await fetchVehicles();
 
-      vehicles.forEach(v=>{
-        if(r&&v.route_id!==r) return;
-        if(t&&v.vehicle_model!==t) return;
-        if(p&&v.license_plate!==p) return;
-        if(d&&!DECORATED.includes(v.vehicle_id)) return; // 🔥 díszített szűrő működik
+    fillSelect(routeFilter, uniqueSorted(vehicles.map(v=>v.route_id)), true);
+    fillSelect(typeFilter, uniqueSorted(vehicles.map(v=>v.vehicle_model)), true);
+    fillSelect(plateFilter, uniqueSorted(vehicles.map(v=>v.license_plate)), true);
 
-        const marker=L.marker([v.latitude,v.longitude],{icon:iconFor(v)}).bindPopup(`
-          <b>Viszonylat:</b> ${v.route_id}<br>
-          <b>Cél:</b> ${v.destination}<br>
-          <b>Rendszám:</b> ${v.license_plate}<br>
-          <b>Típus:</b> ${v.vehicle_model}
-        `);
+    markers.forEach(m=>map.removeLayer(m));
+    markers = [];
 
-        markers.push(marker); marker.addTo(map);
-      });
-    }
+    const r=routeFilter.value, t=typeFilter.value, p=plateFilter.value, d=decorFilter.checked;
 
-    function fillSelect(sel,arr,keep){
-      const prev=sel.value; sel.innerHTML="<option value=''>Összes</option>";
-      arr.forEach(v=>sel.innerHTML+=`<option>${v}</option>`);
-      if(keep && [...sel.options].some(o=>o.value===prev)) sel.value=prev;
-    }
+    vehicles.forEach(v => {
+      if(r && v.route_id!==r) return;
+      if(t && v.vehicle_model!==t) return;
+      if(p && v.license_plate!==p) return;
 
-    refreshData();
-    refreshBtn.onclick=refreshData;
-    routeFilter.onchange=typeFilter.onchange=plateFilter.onchange=decorFilter.onchange=refreshData;
-    setInterval(()=>{ if(autoRefresh.checked) refreshData(); },5000);
-  </script>
+      /* 🎄 FONTOS: rendszám alapján szűrjük a fényjárműveket */
+      if(d && !DECORATED.includes(v.license_plate)) return;
+
+      const marker=L.marker([v.latitude,v.longitude],{icon:iconFor(v)}).bindPopup(`
+        <b>Viszonylat:</b> ${v.route_id}<br>
+        <b>Cél:</b> ${v.destination}<br>
+        <b>Rendszám:</b> ${v.license_plate}<br>
+        <b>Típus:</b> ${v.vehicle_model}
+      `);
+      marker.addTo(map); markers.push(marker);
+    });
+  }
+
+  function fillSelect(sel,arr,keep){
+    const prev=sel.value; sel.innerHTML="<option value=''>Összes</option>";
+    arr.forEach(v=>sel.innerHTML+=`<option>${v}</option>`);
+    if(keep && [...sel.options].some(o=>o.value===prev)) sel.value=prev;
+  }
+
+  refreshData();
+  refreshBtn.onclick=refreshData;
+  routeFilter.onchange=typeFilter.onchange=plateFilter.onchange=decorFilter.onchange=refreshData;
+  setInterval(()=>{ if(autoRefresh.checked) refreshData(); },5000);
+</script>
 
 </body>
 </html>
