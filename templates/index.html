@@ -19,8 +19,10 @@
   </style>
 </head>
 <body>
+
   <div id="controls">
     <div><b>Szűrők</b></div>
+
     <label>Viszonylat:</label>
     <select id="routeFilter"></select>
 
@@ -31,25 +33,25 @@
     <select id="plateFilter"></select>
 
     <button id="refreshBtn">Frissítés</button>
-    
+
     <label class="small"><input type="checkbox" id="autoRefresh" checked> Automatikus frissítés (5 mp)</label>
 
-    <!-- 🔥 ÚJ FUNKCIÓ: csak díszített járművek -->
+    <!-- 🔥 Feldíszített járművek opció -->
     <label class="small"><input type="checkbox" id="decorFilter"> 🎄 Csak feldíszített járművek</label>
-    
+
     <div class="small" id="status"></div>
   </div>
+
 
   <div id="map"></div>
 
   <script>
     const map = L.map('map').setView([47.4979, 19.0402], 12);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap'
-    }).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
 
     let markers = [];
 
+    /* 🔥 IKONOK – ezeknek létezni kell az /icons/ könyvtárban! */
     const ICONS = {
       bus: "/icons/busz.png.png",
       trolley: "/icons/trolibusz.png.png",
@@ -57,110 +59,87 @@
       hev: "/icons/hév.png.png"
     };
 
-    // 🎄 Feldíszített járművek listája
+    /* 🎄 Feldíszített járművek LISTA */
     const DECORATED = ["V1347","V1608","V1441","V2038","V3873","V3888","V4012","V4120","V4064","JARMU1","BPI829","T9100"];
 
-    function makeIcon(url) {
-      return L.icon({ iconUrl: url, iconSize: [32, 32], iconAnchor: [16, 16] });
-    }
 
+    /* 🔥🚋 Villamosok felismerése helyesen */
     function detectMode(v) {
       const model = (v.vehicle_model || "").toLowerCase();
       const route = (v.route_id || "").toLowerCase();
 
-      if (route.startsWith("h")) return "hev";
-      if (model.includes("troli") || model.includes("trollino")) return "trolley";
-    model.includes("villamos") || model.includes("tram") ||
-    model.includes("caf") || model.includes("combino") ||
-    model.includes("tatra") || model.includes("tátra") ||
-    model.includes("tw6000") ||
-    model.includes("ganz") || model.includes("ipari") ||
-    model.includes("csuklós") || model.includes("kcsv7")
-  ) return "tram";
-      return "bus";
+      if (route.startsWith("h")) return "hev"; // HÉV külön marad
+      if (model.includes("trol") || model.includes("trollino")) return "trolley";
+
+      /* ❗ Mostantól ezek mind villamosnak számítanak */
+      if (
+        model.includes("villamos") || model.includes("tram") ||
+        model.includes("caf") || model.includes("combino") ||
+        model.includes("tatra") || model.includes("tátra") ||
+        model.includes("tw6000") ||
+        model.includes("ganz") || model.includes("ipari") ||
+        model.includes("csuklós") || model.includes("kcsv7")
+      ) return "tram";
+
+      return "bus"; // minden más busz
     }
 
-    function iconFor(v) {
-      return makeIcon(ICONS[detectMode(v)]);
-    }
 
-    function fillSelect(select, values, keepValue) {
-      const prev = keepValue ? select.value : "";
-      select.innerHTML = "";
-      const optAll = document.createElement("option");
-      optAll.value = "";
-      optAll.textContent = "Összes";
-      select.appendChild(optAll);
-      values.forEach(v => {
-        const opt = document.createElement("option");
-        opt.value = v;
-        opt.textContent = v;
-        select.appendChild(opt);
-      });
-      if (keepValue && [...select.options].some(o => o.value === prev)) {
-        select.value = prev;
-      }
-    }
+    function makeIcon(url){ return L.icon({ iconUrl:url, iconSize:[32,32], iconAnchor:[16,16] }); }
+    function iconFor(v){ return makeIcon(ICONS[detectMode(v)]); }
 
-    async function fetchVehicles() {
-      const status = document.getElementById("status");
-      status.textContent = "Betöltés…";
-      const res = await fetch("/vehicles", { cache: "no-store" });
-      const data = await res.json();
-      status.textContent = `Járművek: ${data.length}`;
+
+    /* --- Adatbetöltés --- */
+    async function fetchVehicles(){
+      document.getElementById("status").textContent="Betöltés…";
+      const data = await (await fetch("/vehicles",{cache:"no-store"})).json();
+      document.getElementById("status").textContent=`Járművek: ${data.length}`;
       return data;
     }
 
-    function uniqueSorted(arr) {
-      return [...new Set(arr.filter(v => v && v !== "N/A"))].sort((a,b)=>(""+a).localeCompare(""+b,'hu'));
-    }
+    function uniqueSorted(arr){ return [...new Set(arr.filter(v=>v&&v!=="N/A"))].sort(); }
 
-    async function refreshData() {
+
+    /* --- Térkép frissítés --- */
+    async function refreshData(){
       const vehicles = await fetchVehicles();
 
-      const routes = uniqueSorted(vehicles.map(v => v.route_id));
-      const types  = uniqueSorted(vehicles.map(v => v.vehicle_model));
-      const plates = uniqueSorted(vehicles.map(v => v.license_plate));
+      fillSelect(routeFilter, uniqueSorted(vehicles.map(v=>v.route_id)), true);
+      fillSelect(typeFilter,  uniqueSorted(vehicles.map(v=>v.vehicle_model)), true);
+      fillSelect(plateFilter, uniqueSorted(vehicles.map(v=>v.license_plate)), true);
 
-      fillSelect(document.getElementById("routeFilter"), routes, true);
-      fillSelect(document.getElementById("typeFilter"),  types,  true);
-      fillSelect(document.getElementById("plateFilter"), plates, true);
+      markers.forEach(m=>map.removeLayer(m)); markers=[];
 
-      const routeSel = document.getElementById("routeFilter").value;
-      const typeSel  = document.getElementById("typeFilter").value;
-      const plateSel = document.getElementById("plateFilter").value;
-      const decOnly = document.getElementById("decorFilter").checked;
+      const r=routeFilter.value, t=typeFilter.value, p=plateFilter.value, d=decorFilter.checked;
 
-      markers.forEach(m => map.removeLayer(m));
-      markers = [];
+      vehicles.forEach(v=>{
+        if(r&&v.route_id!==r) return;
+        if(t&&v.vehicle_model!==t) return;
+        if(p&&v.license_plate!==p) return;
+        if(d&&!DECORATED.includes(v.vehicle_id)) return; // 🔥 díszített szűrő működik
 
-      vehicles.forEach(v => {
-        if (routeSel && v.route_id !== routeSel) return;
-        if (typeSel  && v.vehicle_model !== typeSel) return;
-        if (plateSel && v.license_plate !== plateSel) return;
-        if (decOnly && !DECORATED.includes(v.vehicle_id)) return; // 🎄 új szűrő
-
-        const popup = `
+        const marker=L.marker([v.latitude,v.longitude],{icon:iconFor(v)}).bindPopup(`
           <b>Viszonylat:</b> ${v.route_id}<br>
-          <b>Célállomás:</b> ${v.destination}<br>
+          <b>Cél:</b> ${v.destination}<br>
           <b>Rendszám:</b> ${v.license_plate}<br>
           <b>Típus:</b> ${v.vehicle_model}
-        `;
-        const marker = L.marker([v.latitude, v.longitude], { icon: iconFor(v) }).bindPopup(popup);
-        markers.push(marker);
-        marker.addTo(map);
+        `);
+
+        markers.push(marker); marker.addTo(map);
       });
     }
 
-    document.getElementById("refreshBtn").addEventListener("click", refreshData);
-    document.getElementById("routeFilter").addEventListener("change", refreshData);
-    document.getElementById("typeFilter").addEventListener("change", refreshData);
-    document.getElementById("plateFilter").addEventListener("change", refreshData);
-    document.getElementById("decorFilter").addEventListener("change", refreshData);
+    function fillSelect(sel,arr,keep){
+      const prev=sel.value; sel.innerHTML="<option value=''>Összes</option>";
+      arr.forEach(v=>sel.innerHTML+=`<option>${v}</option>`);
+      if(keep && [...sel.options].some(o=>o.value===prev)) sel.value=prev;
+    }
 
     refreshData();
-
-    setInterval(()=>{ if(document.getElementById("autoRefresh").checked) refreshData(); },5000);
+    refreshBtn.onclick=refreshData;
+    routeFilter.onchange=typeFilter.onchange=plateFilter.onchange=decorFilter.onchange=refreshData;
+    setInterval(()=>{ if(autoRefresh.checked) refreshData(); },5000);
   </script>
+
 </body>
 </html>
