@@ -35,8 +35,6 @@
   <button id="refreshBtn">Frissítés</button>
 
   <label class="small"><input type="checkbox" id="autoRefresh" checked> Automatikus frissítés (5 mp)</label>
-
-  <!-- 🎄 Díszített járművek kapcsoló -->
   <label class="small"><input type="checkbox" id="decorFilter"> 🎄 Csak feldíszített járművek</label>
 
   <div class="small" id="status"></div>
@@ -46,12 +44,13 @@
 <div id="map"></div>
 
 <script>
+
   const map = L.map('map').setView([47.4979, 19.0402], 12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
 
   let markers = [];
 
-  /* --- Ikonok (létezniük kell az icons mappában) --- */
+  /* --- Ikonok --- */
   const ICONS = {
     bus: "/icons/busz.png.png",
     tram: "/icons/villamos.png.png",
@@ -59,41 +58,47 @@
     hev: "/icons/hév.png.png"
   };
 
-  /* 🎄 Díszített járművek rendszám alapján */
+  /* 🎄 Feldíszített járművek rendszám szerint */
   const DECORATED = ["V1347","V1608","V1441","V2038","V3873","V3888","V4012","V4120","V4064","JARMU1","BPI829","T9100"];
 
 
-  /* -----------------------------  
-      🔥 Járműkategória felismerés  
-      Csak a villamos kap villamos ikont  
-  -----------------------------*/
+  /* 🔥 Jármű osztályozás — MOSTANTÓL PONTOS */
   function detectMode(v) {
     const model = (v.vehicle_model || "").toLowerCase();
     const route = (v.route_id || "").toLowerCase();
 
-    /* HÉV külön */
+    // HÉV külön
     if (route.startsWith("h")) return "hev";
 
-    /* Trolibusz */
+    // Trolibusz
     if (model.includes("trol") || model.includes("trollino")) return "trolley";
 
-    /* 🚋 VILLAMOS — MIND csak villamos ikont kap */
+    // 🔥 Ezek BIZTOS buszok (megelőzik a villamos szűrést!)
+    if (
+      model.includes("mercedes") ||
+      model.includes("conecto") ||
+      model.includes("volvo") ||
+      model.includes("man")
+    ) return "bus";
+
+    // 🚋 Villamosok pontos szűrése (TW 6000 szóközzel!)
     if (
       model.includes("villamos") || model.includes("tram") ||
       model.includes("caf") || model.includes("combino") ||
       model.includes("tatra") || model.includes("tátra") ||
-      model.includes("tw6000") ||
-      model.includes("ganz") || model.includes("ipari") ||
-      model.includes("csuklós") || model.includes("kcsv7")
+      model.includes("tw 6000") ||  // << kijavítva
+      model.includes("ganz") ||
+      model.includes("kcsv7")
     ) return "tram";
 
-    /* ❗ minden más BUSZ */
-    return "bus";
+    return "bus"; // minden más busz
   }
 
 
-  function makeIcon(url){ return L.icon({ iconUrl:url, iconSize:[32,32], iconAnchor:[16,16] }); }
-  function iconFor(v){ return makeIcon(ICONS[detectMode(v)]); }
+  function makeIcon(url) {
+    return L.icon({ iconUrl:url, iconSize:[32,32], iconAnchor:[16,16] });
+  }
+  function iconFor(v) { return makeIcon(ICONS[detectMode(v)]); }
 
 
   async function fetchVehicles(){
@@ -106,9 +111,6 @@
   function uniqueSorted(arr){ return [...new Set(arr.filter(v=>v&&v!=="N/A"))].sort(); }
 
 
-  /* -----------------------------
-      🔄 Térkép frissítés
-  -----------------------------*/
   async function refreshData(){
     const vehicles = await fetchVehicles();
 
@@ -116,8 +118,7 @@
     fillSelect(typeFilter, uniqueSorted(vehicles.map(v=>v.vehicle_model)), true);
     fillSelect(plateFilter, uniqueSorted(vehicles.map(v=>v.license_plate)), true);
 
-    markers.forEach(m=>map.removeLayer(m));
-    markers = [];
+    markers.forEach(m=>map.removeLayer(m)); markers=[];
 
     const r=routeFilter.value, t=typeFilter.value, p=plateFilter.value, d=decorFilter.checked;
 
@@ -126,7 +127,7 @@
       if(t && v.vehicle_model!==t) return;
       if(p && v.license_plate!==p) return;
 
-      /* 🎄 FONTOS: rendszám alapján szűrjük a fényjárműveket */
+      // 🎄 csak rendszám alapján szűr
       if(d && !DECORATED.includes(v.license_plate)) return;
 
       const marker=L.marker([v.latitude,v.longitude],{icon:iconFor(v)}).bindPopup(`
@@ -135,6 +136,7 @@
         <b>Rendszám:</b> ${v.license_plate}<br>
         <b>Típus:</b> ${v.vehicle_model}
       `);
+
       marker.addTo(map); markers.push(marker);
     });
   }
@@ -149,7 +151,7 @@
   refreshBtn.onclick=refreshData;
   routeFilter.onchange=typeFilter.onchange=plateFilter.onchange=decorFilter.onchange=refreshData;
   setInterval(()=>{ if(autoRefresh.checked) refreshData(); },5000);
-</script>
 
+</script>
 </body>
 </html>
