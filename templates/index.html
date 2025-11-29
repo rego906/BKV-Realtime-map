@@ -31,7 +31,12 @@
     <select id="plateFilter"></select>
 
     <button id="refreshBtn">Frissítés</button>
+    
     <label class="small"><input type="checkbox" id="autoRefresh" checked> Automatikus frissítés (5 mp)</label>
+
+    <!-- 🔥 ÚJ FUNKCIÓ: csak díszített járművek -->
+    <label class="small"><input type="checkbox" id="decorFilter"> 🎄 Csak feldíszített járművek</label>
+    
     <div class="small" id="status"></div>
   </div>
 
@@ -45,13 +50,15 @@
 
     let markers = [];
 
-    // --- ikonok pontos elérési úttal ---
     const ICONS = {
       bus: "/icons/busz.png.png",
       trolley: "/icons/trolibusz.png.png",
       tram: "/icons/villamos.png.png",
       hev: "/icons/hév.png.png"
     };
+
+    // 🎄 Feldíszített járművek listája
+    const DECORATED = ["V1347","V1608","V1441","V2038","V3873","V3888","V4012","V4120","V4064","JARMU1","BPI829","T9100"];
 
     function makeIcon(url) {
       return L.icon({ iconUrl: url, iconSize: [32, 32], iconAnchor: [16, 16] });
@@ -63,15 +70,18 @@
 
       if (route.startsWith("h")) return "hev";
       if (model.includes("troli") || model.includes("trollino")) return "trolley";
-      if (model.includes("villamos") || model.includes("tram") || model.includes("caf") || model.includes("combino"))
-        return "tram";
+    model.includes("villamos") || model.includes("tram") ||
+    model.includes("caf") || model.includes("combino") ||
+    model.includes("tatra") || model.includes("tátra") ||
+    model.includes("tw6000") ||
+    model.includes("ganz") || model.includes("ipari") ||
+    model.includes("csuklós") || model.includes("kcsv7")
+  ) return "tram";
       return "bus";
     }
 
     function iconFor(v) {
-      const mode = detectMode(v);
-      const url = ICONS[mode];
-      return url ? makeIcon(url) : new L.Icon.Default();
+      return makeIcon(ICONS[detectMode(v)]);
     }
 
     function fillSelect(select, values, keepValue) {
@@ -102,7 +112,7 @@
     }
 
     function uniqueSorted(arr) {
-      return [...new Set(arr.filter(v => v && v !== "N/A"))].sort((a,b) => (""+a).localeCompare(""+b, 'hu'));
+      return [...new Set(arr.filter(v => v && v !== "N/A"))].sort((a,b)=>(""+a).localeCompare(""+b,'hu'));
     }
 
     async function refreshData() {
@@ -119,6 +129,7 @@
       const routeSel = document.getElementById("routeFilter").value;
       const typeSel  = document.getElementById("typeFilter").value;
       const plateSel = document.getElementById("plateFilter").value;
+      const decOnly = document.getElementById("decorFilter").checked;
 
       markers.forEach(m => map.removeLayer(m));
       markers = [];
@@ -127,6 +138,7 @@
         if (routeSel && v.route_id !== routeSel) return;
         if (typeSel  && v.vehicle_model !== typeSel) return;
         if (plateSel && v.license_plate !== plateSel) return;
+        if (decOnly && !DECORATED.includes(v.vehicle_id)) return; // 🎄 új szűrő
 
         const popup = `
           <b>Viszonylat:</b> ${v.route_id}<br>
@@ -144,15 +156,11 @@
     document.getElementById("routeFilter").addEventListener("change", refreshData);
     document.getElementById("typeFilter").addEventListener("change", refreshData);
     document.getElementById("plateFilter").addEventListener("change", refreshData);
+    document.getElementById("decorFilter").addEventListener("change", refreshData);
 
     refreshData();
 
-    // 🔁 Automatikus frissítés 5 másodpercenként
-    setInterval(() => {
-      if (document.getElementById("autoRefresh").checked) {
-        refreshData();
-      }
-    }, 5000);
+    setInterval(()=>{ if(document.getElementById("autoRefresh").checked) refreshData(); },5000);
   </script>
 </body>
 </html>
