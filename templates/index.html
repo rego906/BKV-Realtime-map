@@ -93,7 +93,7 @@ function detectMode(v){
   const r=(v.route_id||"").toLowerCase();
   if(r.startsWith("h")) return "hev";
   if(m.includes("trol")) return "trolley";
-  if(m.includes("caf")||m.includes("combino")||m.includes("tatra")||m.includes("tw 6000")) return "tram";
+  if(m.includes("caf")||m.includes("combino")||m.includes("tatra")||m.includes("tw 6000")) return "tram"|m.includes("KCSV7")||m.includes("Ganz")|;
   return "bus";
 }
 
@@ -190,3 +190,4 @@ refreshData();
 </script>
 </body>
 </html>
+
