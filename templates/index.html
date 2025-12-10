@@ -2,63 +2,27 @@
 <html lang="hu">
 <head>
 <meta charset="UTF-8">
-<title>BKV realtime</title>
+<title>BKV realtime – TESZT</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css">
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css">
-
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
 
 <style>
 html, body { height:100%; margin:0; }
 #map { height:100%; }
-
-#controls {
-  position:absolute; top:10px; left:10px; z-index:1000;
-  background:rgba(255,255,255,0.95);
-  padding:10px; border-radius:8px;
-  box-shadow:0 2px 8px rgba(0,0,0,.2);
-  font-family:Arial;
-}
-select, button { width:220px; margin:4px 0; }
-.small { font-size:12px; color:#666; }
 </style>
 </head>
 
 <body>
-
-<div id="controls">
-<b>Szűrők</b><br>
-
-<select id="routeFilter"></select>
-<select id="typeFilter"></select>
-<select id="plateFilter"></select>
-
-<button id="refreshBtn">Frissítés</button><br>
-
-<label class="small">
-<input type="checkbox" id="autoRefresh" checked>
- Automatikus frissítés (5 mp)
-</label><br>
-
-<label class="small">
-<input type="checkbox" id="decorFilter">
- 🎄 Csak feldíszített
-</label>
-
-<div class="small" id="status"></div>
-</div>
-
 <div id="map"></div>
 
 <script>
-const map = L.map("map").setView([47.4979,19.0402],12);
+/* --- térkép --- */
+const map = L.map("map").setView([47.4979, 19.0402], 12);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 
-/* --- Ikonok --- */
+/* --- Ikonok (PONT AHOGY KÉRTED) --- */
 const ICONS = {
   bus: "/icons/busz.png.png",
   tram: "/icons/villamos.png.png",
@@ -66,104 +30,38 @@ const ICONS = {
   hev: "/icons/hév.png.png"
 };
 
-const DECORATED = ["V1347","V1608","V1441","V2038","V3873","V3888","V4012","V4120","V4064","JARMU1","BPI829","T9100"];
+/* --- teszt marker (ennek MINDIG látszania kell) --- */
+L.marker([47.4979, 19.0402])
+  .addTo(map)
+  .bindPopup("TESZT MARKER");
 
-const iconCache = {};
-const markerMap = new Map();
+/* --- járművek betöltése --- */
+fetch("/vehicles")
+  .then(r => r.json())
+  .then(data => {
+    console.log("VEHICLES:", data.length, data[0]);
 
-const cluster = L.markerClusterGroup({
-  disableClusteringAtZoom: 16,
-  maxClusterRadius: 40
-});
-map.addLayer(cluster);
+    data.forEach(v => {
+      /* ⚠️ KRITIKUS: NEM !v.latitude */
+      if (v.latitude == null || v.longitude == null) return;
 
-function detectMode(v){
-  const m=(v.vehicle_model||"").toLowerCase();
-  const r=(v.route_id||"").toLowerCase();
-  if(r.startsWith("h")) return "hev";
-  if(m.includes("trol")) return "trolley";
-  if(m.includes("mercedes")||m.includes("man")||m.includes("volvo")) return "bus";
-  if(m.includes("caf")||m.includes("combino")||m.includes("tatra")||m.includes("tw 6000")) return "tram";
-  return "bus";
-}
-
-function iconFor(v){
-  const mode = detectMode(v);
-  if(!iconCache[mode]){
-    iconCache[mode] = L.icon({
-      iconUrl: ICONS[mode],
-      iconSize:[28,28],
-      iconAnchor:[14,14]
+      L.marker(
+        [v.latitude, v.longitude],
+        {
+          icon: L.icon({
+            iconUrl: ICONS.bus,   // direkt busz ikon
+            iconSize: [28,28],
+            iconAnchor: [14,14]
+          })
+        }
+      )
+      .addTo(map)
+      .bindPopup(
+        "Viszonylat: " + v.route_id + "<br>" +
+        "Rendszám: " + v.license_plate
+      );
     });
-  }
-  return iconCache[mode];
-}
-
-async function fetchVehicles(){
-  status.textContent="Betöltés…";
-  const r = await fetch("/vehicles",{cache:"no-store"});
-  const data = await r.json();
-  status.textContent=`Járművek: ${data.length}`;
-  return data;
-}
-
-function fillSelect(sel,arr){
-  const prev=sel.value;
-  sel.innerHTML="<option value=''>Összes</option>";
-  [...new Set(arr.filter(v=>v&&v!=="N/A"))].sort()
-    .forEach(v=>sel.innerHTML+=`<option>${v}</option>`);
-  if([...sel.options].some(o=>o.value===prev)) sel.value=prev;
-}
-
-async function refreshData(){
-  const vehicles = await fetchVehicles();
-
-  fillSelect(routeFilter,vehicles.map(v=>v.route_id));
-  fillSelect(typeFilter,vehicles.map(v=>v.vehicle_model));
-  fillSelect(plateFilter,vehicles.map(v=>v.license_plate));
-
-  const active = new Set();
-
-  vehicles.forEach(v=>{
-    if(!v.vehicle_id||!v.latitude||!v.longitude) return;
-    if(routeFilter.value&&v.route_id!==routeFilter.value) return;
-    if(typeFilter.value&&v.vehicle_model!==typeFilter.value) return;
-    if(plateFilter.value&&v.license_plate!==plateFilter.value) return;
-    if(decorFilter.checked&&!DECORATED.includes(v.license_plate)) return;
-
-    active.add(v.vehicle_id);
-
-    if(markerMap.has(v.vehicle_id)){
-      markerMap.get(v.vehicle_id).setLatLng([v.latitude,v.longitude]);
-    } else {
-      const marker=L.marker([v.latitude,v.longitude],{icon:iconFor(v)})
-        .bindPopup(`
-          <b>Viszonylat:</b> ${v.route_id}<br>
-          <b>Cél:</b> ${v.destination}<br>
-          <b>Rendszám:</b> ${v.license_plate}<br>
-          <b>Típus:</b> ${v.vehicle_model}
-        `);
-      markerMap.set(v.vehicle_id,marker);
-      cluster.addLayer(marker);
-    }
   });
-
-  for(const [id,m] of markerMap){
-    if(!active.has(id)){
-      cluster.removeLayer(m);
-      markerMap.delete(id);
-    }
-  }
-}
-
-refreshBtn.onclick = refreshData;
-routeFilter.onchange =
-typeFilter.onchange =
-plateFilter.onchange =
-decorFilter.onchange = refreshData;
-
-refreshData();
-setInterval(()=>{ if(autoRefresh.checked) refreshData(); },5000);
 </script>
 </body>
 </html>
