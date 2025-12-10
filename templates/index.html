@@ -2,7 +2,7 @@
 <html lang="hu">
 <head>
 <meta charset="UTF-8">
-<title>BKV Realtime</title>
+<title>BKV realtime</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -18,12 +18,13 @@ html, body { height:100%; margin:0; }
 
 #controls {
   position:absolute; top:10px; left:10px; z-index:1000;
-  background:rgba(255,255,255,.95);
+  background:rgba(255,255,255,0.95);
   padding:10px; border-radius:8px;
-  font-family:Arial; box-shadow:0 2px 8px rgba(0,0,0,.2)
+  box-shadow:0 2px 8px rgba(0,0,0,.2);
+  font-family:Arial;
 }
-select, button { width:220px; margin:4px 0 }
-.small { font-size:12px; color:#666 }
+select, button { width:220px; margin:4px 0; }
+.small { font-size:12px; color:#666; }
 </style>
 </head>
 
@@ -36,7 +37,7 @@ select, button { width:220px; margin:4px 0 }
 <select id="typeFilter"></select>
 <select id="plateFilter"></select>
 
-<button id="refreshBtn">Frissítés</button>
+<button id="refreshBtn">Frissítés</button><br>
 
 <label class="small">
 <input type="checkbox" id="autoRefresh" checked>
@@ -57,17 +58,16 @@ select, button { width:220px; margin:4px 0 }
 const map = L.map("map").setView([47.4979,19.0402],12);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 
-/* --- ICONS --- */
+/* --- Ikonok --- */
 const ICONS = {
-  bus: "/icons/busz.png",
-  tram: "/icons/villamos.png",
-  trolley: "/icons/trolibusz.png",
-  hev: "/icons/hév.png"
+  bus: "/icons/busz.png.png",
+  tram: "/icons/villamos.png.png",
+  trolley: "/icons/trolibusz.png.png",
+  hev: "/icons/hév.png.png"
 };
 
 const DECORATED = ["V1347","V1608","V1441","V2038","V3873","V3888","V4012","V4120","V4064","JARMU1","BPI829","T9100"];
 
-/* --- CACHE --- */
 const iconCache = {};
 const markerMap = new Map();
 
@@ -77,7 +77,6 @@ const cluster = L.markerClusterGroup({
 });
 map.addLayer(cluster);
 
-/* --- MODE DETECT --- */
 function detectMode(v){
   const m=(v.vehicle_model||"").toLowerCase();
   const r=(v.route_id||"").toLowerCase();
@@ -89,10 +88,10 @@ function detectMode(v){
 }
 
 function iconFor(v){
-  const mode=detectMode(v);
+  const mode = detectMode(v);
   if(!iconCache[mode]){
-    iconCache[mode]=L.icon({
-      iconUrl:ICONS[mode],
+    iconCache[mode] = L.icon({
+      iconUrl: ICONS[mode],
       iconSize:[28,28],
       iconAnchor:[14,14]
     });
@@ -100,10 +99,10 @@ function iconFor(v){
   return iconCache[mode];
 }
 
-/* --- FETCH --- */
 async function fetchVehicles(){
   status.textContent="Betöltés…";
-  const data=await (await fetch("/vehicles",{cache:"no-store"})).json();
+  const r = await fetch("/vehicles",{cache:"no-store"});
+  const data = await r.json();
   status.textContent=`Járművek: ${data.length}`;
   return data;
 }
@@ -116,19 +115,17 @@ function fillSelect(sel,arr){
   if([...sel.options].some(o=>o.value===prev)) sel.value=prev;
 }
 
-/* --- MAIN REFRESH --- */
 async function refreshData(){
-  const vehicles=await fetchVehicles();
+  const vehicles = await fetchVehicles();
 
   fillSelect(routeFilter,vehicles.map(v=>v.route_id));
   fillSelect(typeFilter,vehicles.map(v=>v.vehicle_model));
   fillSelect(plateFilter,vehicles.map(v=>v.license_plate));
 
-  const active=new Set();
+  const active = new Set();
 
   vehicles.forEach(v=>{
     if(!v.vehicle_id||!v.latitude||!v.longitude) return;
-
     if(routeFilter.value&&v.route_id!==routeFilter.value) return;
     if(typeFilter.value&&v.vehicle_model!==typeFilter.value) return;
     if(plateFilter.value&&v.license_plate!==plateFilter.value) return;
@@ -159,8 +156,11 @@ async function refreshData(){
   }
 }
 
-refreshBtn.onclick=refreshData;
-routeFilter.onchange=typeFilter.onchange=plateFilter.onchange=decorFilter.onchange=refreshData;
+refreshBtn.onclick = refreshData;
+routeFilter.onchange =
+typeFilter.onchange =
+plateFilter.onchange =
+decorFilter.onchange = refreshData;
 
 refreshData();
 setInterval(()=>{ if(autoRefresh.checked) refreshData(); },5000);
