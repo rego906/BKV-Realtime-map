@@ -48,8 +48,13 @@ select, button {
   <button id="refreshBtn">Frissítés</button><br>
 
   <label class="small">
-    <input type="checkbox" id="autoRefresh" checked>
+    <input type="checkbox" id="autoRefresh">
     Automatikus frissítés (5 mp)
+  </label><br>
+
+  <label class="small">
+    <input type="checkbox" id="decorFilter">
+    🎄 Csak feldíszített járművek
   </label>
 
   <div class="small" id="status"></div>
@@ -58,11 +63,11 @@ select, button {
 <div id="map"></div>
 
 <script>
-/* --- MAP --- */
+/* ================= MAP ================= */
 const map = L.map("map").setView([47.4979,19.0402],12);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 
-/* --- IKONOK (AHOGY KÉRTED) --- */
+/* ================= IKONOK ================= */
 const ICONS = {
   bus: "/icons/busz.png.png",
   tram: "/icons/villamos.png.png",
@@ -70,8 +75,29 @@ const ICONS = {
   hev: "/icons/hév.png.png"
 };
 
+/* 🎄 Feldíszített járművek */
+const DECORATED = [
+  "V1347","V1608","V1441","V2038","V3873",
+  "V3888","V4012","V4120","V4064","JARMU1",
+  "BPI829","T9100"
+];
+
+/* ================= CACHE ================= */
 const iconCache = {};
-function iconFor(mode){
+const markerMap = new Map();
+
+/* ================= HELPERS ================= */
+function detectMode(v){
+  const m=(v.vehicle_model||"").toLowerCase();
+  const r=(v.route_id||"").toLowerCase();
+  if(r.startsWith("h")) return "hev";
+  if(m.includes("trol")) return "trolley";
+  if(m.includes("caf")||m.includes("combino")||m.includes("tatra")||m.includes("tw 6000")) return "tram";
+  return "bus";
+}
+
+function iconFor(v){
+  const mode = detectMode(v);
   if(!iconCache[mode]){
     iconCache[mode] = L.icon({
       iconUrl: ICONS[mode],
@@ -82,94 +108,86 @@ function iconFor(mode){
   return iconCache[mode];
 }
 
-/* --- jármű típus felismerés --- */
-function detectMode(v){
-  const m = (v.vehicle_model || "").toLowerCase();
-  const r = (v.route_id || "").toLowerCase();
-
-  if (r.startsWith("h")) return "hev";
-  if (m.includes("trol")) return "trolley";
-  if (
-    m.includes("caf") ||
-    m.includes("combino") ||
-    m.includes("tatra") ||
-    m.includes("tw 6000")
-  ) return "tram";
-
-  return "bus";
-}
-
-/* --- STATE --- */
-let markers = [];
-
-/* --- UTIL --- */
 function unique(arr){
-  return [...new Set(arr.filter(v => v && v !== "N/A"))].sort();
+  return [...new Set(arr.filter(v=>v && v!=="N/A"))].sort();
 }
 
 function fillSelect(sel, values){
   const prev = sel.value;
   sel.innerHTML = "<option value=''>Összes</option>";
-  values.forEach(v => {
-    sel.innerHTML += `<option value="${v}">${v}</option>`;
-  });
-  if ([...sel.options].some(o => o.value === prev)) {
-    sel.value = prev;
-  }
+  values.forEach(v => sel.innerHTML += `<option>${v}</option>`);
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
-/* --- FETCH --- */
+/* ================= FETCH ================= */
 async function fetchVehicles(){
-  status.textContent = "Betöltés…";
-  const r = await fetch("/vehicles", { cache: "no-store" });
+  status.textContent="Betöltés…";
+  const r = await fetch("/vehicles",{cache:"no-store"});
   const data = await r.json();
-  status.textContent = `Járművek: ${data.length}`;
+  status.textContent=`Járművek: ${data.length}`;
   return data;
 }
 
-/* --- MAIN --- */
+/* ================= MAIN ================= */
 async function refreshData(){
   const vehicles = await fetchVehicles();
 
-  fillSelect(routeFilter, unique(vehicles.map(v => v.route_id)));
-  fillSelect(typeFilter, unique(vehicles.map(v => v.vehicle_model)));
-  fillSelect(plateFilter, unique(vehicles.map(v => v.license_plate)));
+  fillSelect(routeFilter, unique(vehicles.map(v=>v.route_id)));
+  fillSelect(typeFilter, unique(vehicles.map(v=>v.vehicle_model)));
+  fillSelect(plateFilter, unique(vehicles.map(v=>v.license_plate)));
 
-  markers.forEach(m => map.removeLayer(m));
-  markers = [];
+  const active = new Set();
 
   vehicles.forEach(v => {
     if (v.latitude == null || v.longitude == null) return;
     if (routeFilter.value && v.route_id !== routeFilter.value) return;
     if (typeFilter.value && v.vehicle_model !== typeFilter.value) return;
     if (plateFilter.value && v.license_plate !== plateFilter.value) return;
+    if (decorFilter.checked && !DECORATED.includes(v.license_plate)) return;
 
-    const marker = L.marker(
-      [v.latitude, v.longitude],
-      { icon: iconFor(detectMode(v)) }
-    ).bindPopup(`
-      <b>Viszonylat:</b> ${v.route_id}<br>
-      <b>Cél:</b> ${v.destination}<br>
-      <b>Rendszám:</b> ${v.license_plate}<br>
-      <b>Típus:</b> ${v.vehicle_model}
-    `);
+    const id = v.vehicle_id || `${v.route_id}_${v.latitude}_${v.longitude}`;
+    active.add(id);
 
-    marker.addTo(map);
-    markers.push(marker);
+    if (markerMap.has(id)) {
+      markerMap.get(id).setLatLng([v.latitude, v.longitude]);
+    } else {
+      const marker = L.marker(
+        [v.latitude, v.longitude],
+        { icon: iconFor(v) }
+      ).bindPopup(`
+        <b>Viszonylat:</b> ${v.route_id}<br>
+        <b>Cél:</b> ${v.destination}<br>
+        <b>Rendszám:</b> ${v.license_plate}<br>
+        <b>Típus:</b> ${v.vehicle_model}
+      `);
+      marker.addTo(map);
+      markerMap.set(id, marker);
+    }
   });
+
+  /* eltűnt járművek törlése */
+  for (const [id, marker] of markerMap){
+    if (!active.has(id)){
+      map.removeLayer(marker);
+      markerMap.delete(id);
+    }
+  }
 }
 
-/* --- EVENTS --- */
+/* ================= EVENTS ================= */
 refreshBtn.onclick = refreshData;
 routeFilter.onchange =
 typeFilter.onchange =
-plateFilter.onchange = refreshData;
+plateFilter.onchange =
+decorFilter.onchange = refreshData;
 
-/* --- START --- */
-refreshData();
+/* auto refresh – alapból KI */
 setInterval(() => {
   if (autoRefresh.checked) refreshData();
 }, 5000);
+
+/* első betöltés */
+refreshData();
 </script>
 </body>
 </html>
