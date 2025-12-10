@@ -1,157 +1,169 @@
 <!DOCTYPE html>
 <html lang="hu">
 <head>
-  <meta charset="UTF-8" />
-  <title>BKV realtime</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <style>
-    html, body { height: 100%; margin: 0; }
-    #map { height: 100%; }
-    #controls {
-      position: absolute; top: 10px; left: 10px; z-index: 1000;
-      background: rgba(255,255,255,0.95); padding: 10px; border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,.2); font-family: Arial, sans-serif;
-    }
-    select, button, label { width: 220px; margin: 4px 0; }
-    .small { font-size: 12px; color: #666; }
-  </style>
+<meta charset="UTF-8">
+<title>BKV Realtime</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css">
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+
+<style>
+html, body { height:100%; margin:0; }
+#map { height:100%; }
+
+#controls {
+  position:absolute; top:10px; left:10px; z-index:1000;
+  background:rgba(255,255,255,.95);
+  padding:10px; border-radius:8px;
+  font-family:Arial; box-shadow:0 2px 8px rgba(0,0,0,.2)
+}
+select, button { width:220px; margin:4px 0 }
+.small { font-size:12px; color:#666 }
+</style>
 </head>
+
 <body>
 
 <div id="controls">
-  <div><b>Szűrők</b></div>
+<b>Szűrők</b><br>
 
-  <label>Viszonylat:</label>
-  <select id="routeFilter"></select>
+<select id="routeFilter"></select>
+<select id="typeFilter"></select>
+<select id="plateFilter"></select>
 
-  <label>Típus:</label>
-  <select id="typeFilter"></select>
+<button id="refreshBtn">Frissítés</button>
 
-  <label>Rendszám:</label>
-  <select id="plateFilter"></select>
+<label class="small">
+<input type="checkbox" id="autoRefresh" checked>
+ Automatikus frissítés (5 mp)
+</label><br>
 
-  <button id="refreshBtn">Frissítés</button>
+<label class="small">
+<input type="checkbox" id="decorFilter">
+ 🎄 Csak feldíszített
+</label>
 
-  <label class="small"><input type="checkbox" id="autoRefresh" checked> Automatikus frissítés (5 mp)</label>
-  <label class="small"><input type="checkbox" id="decorFilter"> 🎄 Csak feldíszített járművek</label>
-
-  <div class="small" id="status"></div>
+<div class="small" id="status"></div>
 </div>
-
 
 <div id="map"></div>
 
 <script>
+const map = L.map("map").setView([47.4979,19.0402],12);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 
-  const map = L.map('map').setView([47.4979, 19.0402], 12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+/* --- ICONS --- */
+const ICONS = {
+  bus: "/icons/busz.png",
+  tram: "/icons/villamos.png",
+  trolley: "/icons/trolibusz.png",
+  hev: "/icons/hév.png"
+};
 
-  let markers = [];
+const DECORATED = ["V1347","V1608","V1441","V2038","V3873","V3888","V4012","V4120","V4064","JARMU1","BPI829","T9100"];
 
-  /* --- Ikonok --- */
-  const ICONS = {
-    bus: "/icons/busz.png.png",
-    tram: "/icons/villamos.png.png",
-    trolley: "/icons/trolibusz.png.png",
-    hev: "/icons/hév.png.png"
-  };
+/* --- CACHE --- */
+const iconCache = {};
+const markerMap = new Map();
 
-  /* 🎄 Feldíszített járművek rendszám szerint */
-  const DECORATED = ["V1347","V1608","V1441","V2038","V3873","V3888","V4012","V4120","V4064","JARMU1","BPI829","T9100"];
+const cluster = L.markerClusterGroup({
+  disableClusteringAtZoom: 16,
+  maxClusterRadius: 40
+});
+map.addLayer(cluster);
 
+/* --- MODE DETECT --- */
+function detectMode(v){
+  const m=(v.vehicle_model||"").toLowerCase();
+  const r=(v.route_id||"").toLowerCase();
+  if(r.startsWith("h")) return "hev";
+  if(m.includes("trol")) return "trolley";
+  if(m.includes("mercedes")||m.includes("man")||m.includes("volvo")) return "bus";
+  if(m.includes("caf")||m.includes("combino")||m.includes("tatra")||m.includes("tw 6000")) return "tram";
+  return "bus";
+}
 
-  /* 🔥 Jármű osztályozás — MOSTANTÓL PONTOS */
-  function detectMode(v) {
-    const model = (v.vehicle_model || "").toLowerCase();
-    const route = (v.route_id || "").toLowerCase();
-
-    // HÉV külön
-    if (route.startsWith("h")) return "hev";
-
-    // Trolibusz
-    if (model.includes("trol") || model.includes("trollino")) return "trolley";
-
-    // 🔥 Ezek BIZTOS buszok (megelőzik a villamos szűrést!)
-    if (
-      model.includes("mercedes") ||
-      model.includes("conecto") ||
-      model.includes("volvo") ||
-      model.includes("man")
-    ) return "bus";
-
-    // 🚋 Villamosok pontos szűrése (TW 6000 szóközzel!)
-    if (
-      model.includes("villamos") || model.includes("tram") ||
-      model.includes("caf") || model.includes("combino") ||
-      model.includes("tatra") || model.includes("tátra") ||
-      model.includes("tw 6000") ||  // << kijavítva
-      model.includes("ganz") ||
-      model.includes("kcsv7")
-    ) return "tram";
-
-    return "bus"; // minden más busz
-  }
-
-
-  function makeIcon(url) {
-    return L.icon({ iconUrl:url, iconSize:[32,32], iconAnchor:[16,16] });
-  }
-  function iconFor(v) { return makeIcon(ICONS[detectMode(v)]); }
-
-
-  async function fetchVehicles(){
-    document.getElementById("status").textContent="Betöltés…";
-    const data = await (await fetch("/vehicles",{cache:"no-store"})).json();
-    document.getElementById("status").textContent=`Járművek: ${data.length}`;
-    return data;
-  }
-
-  function uniqueSorted(arr){ return [...new Set(arr.filter(v=>v&&v!=="N/A"))].sort(); }
-
-
-  async function refreshData(){
-    const vehicles = await fetchVehicles();
-
-    fillSelect(routeFilter, uniqueSorted(vehicles.map(v=>v.route_id)), true);
-    fillSelect(typeFilter, uniqueSorted(vehicles.map(v=>v.vehicle_model)), true);
-    fillSelect(plateFilter, uniqueSorted(vehicles.map(v=>v.license_plate)), true);
-
-    markers.forEach(m=>map.removeLayer(m)); markers=[];
-
-    const r=routeFilter.value, t=typeFilter.value, p=plateFilter.value, d=decorFilter.checked;
-
-    vehicles.forEach(v => {
-      if(r && v.route_id!==r) return;
-      if(t && v.vehicle_model!==t) return;
-      if(p && v.license_plate!==p) return;
-
-      // 🎄 csak rendszám alapján szűr
-      if(d && !DECORATED.includes(v.license_plate)) return;
-
-      const marker=L.marker([v.latitude,v.longitude],{icon:iconFor(v)}).bindPopup(`
-        <b>Viszonylat:</b> ${v.route_id}<br>
-        <b>Cél:</b> ${v.destination}<br>
-        <b>Rendszám:</b> ${v.license_plate}<br>
-        <b>Típus:</b> ${v.vehicle_model}
-      `);
-
-      marker.addTo(map); markers.push(marker);
+function iconFor(v){
+  const mode=detectMode(v);
+  if(!iconCache[mode]){
+    iconCache[mode]=L.icon({
+      iconUrl:ICONS[mode],
+      iconSize:[28,28],
+      iconAnchor:[14,14]
     });
   }
+  return iconCache[mode];
+}
 
-  function fillSelect(sel,arr,keep){
-    const prev=sel.value; sel.innerHTML="<option value=''>Összes</option>";
-    arr.forEach(v=>sel.innerHTML+=`<option>${v}</option>`);
-    if(keep && [...sel.options].some(o=>o.value===prev)) sel.value=prev;
+/* --- FETCH --- */
+async function fetchVehicles(){
+  status.textContent="Betöltés…";
+  const data=await (await fetch("/vehicles",{cache:"no-store"})).json();
+  status.textContent=`Járművek: ${data.length}`;
+  return data;
+}
+
+function fillSelect(sel,arr){
+  const prev=sel.value;
+  sel.innerHTML="<option value=''>Összes</option>";
+  [...new Set(arr.filter(v=>v&&v!=="N/A"))].sort()
+    .forEach(v=>sel.innerHTML+=`<option>${v}</option>`);
+  if([...sel.options].some(o=>o.value===prev)) sel.value=prev;
+}
+
+/* --- MAIN REFRESH --- */
+async function refreshData(){
+  const vehicles=await fetchVehicles();
+
+  fillSelect(routeFilter,vehicles.map(v=>v.route_id));
+  fillSelect(typeFilter,vehicles.map(v=>v.vehicle_model));
+  fillSelect(plateFilter,vehicles.map(v=>v.license_plate));
+
+  const active=new Set();
+
+  vehicles.forEach(v=>{
+    if(!v.vehicle_id||!v.latitude||!v.longitude) return;
+
+    if(routeFilter.value&&v.route_id!==routeFilter.value) return;
+    if(typeFilter.value&&v.vehicle_model!==typeFilter.value) return;
+    if(plateFilter.value&&v.license_plate!==plateFilter.value) return;
+    if(decorFilter.checked&&!DECORATED.includes(v.license_plate)) return;
+
+    active.add(v.vehicle_id);
+
+    if(markerMap.has(v.vehicle_id)){
+      markerMap.get(v.vehicle_id).setLatLng([v.latitude,v.longitude]);
+    } else {
+      const marker=L.marker([v.latitude,v.longitude],{icon:iconFor(v)})
+        .bindPopup(`
+          <b>Viszonylat:</b> ${v.route_id}<br>
+          <b>Cél:</b> ${v.destination}<br>
+          <b>Rendszám:</b> ${v.license_plate}<br>
+          <b>Típus:</b> ${v.vehicle_model}
+        `);
+      markerMap.set(v.vehicle_id,marker);
+      cluster.addLayer(marker);
+    }
+  });
+
+  for(const [id,m] of markerMap){
+    if(!active.has(id)){
+      cluster.removeLayer(m);
+      markerMap.delete(id);
+    }
   }
+}
 
-  refreshData();
-  refreshBtn.onclick=refreshData;
-  routeFilter.onchange=typeFilter.onchange=plateFilter.onchange=decorFilter.onchange=refreshData;
-  setInterval(()=>{ if(autoRefresh.checked) refreshData(); },5000);
+refreshBtn.onclick=refreshData;
+routeFilter.onchange=typeFilter.onchange=plateFilter.onchange=decorFilter.onchange=refreshData;
 
+refreshData();
+setInterval(()=>{ if(autoRefresh.checked) refreshData(); },5000);
 </script>
 </body>
 </html>
