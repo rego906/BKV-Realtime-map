@@ -55,7 +55,8 @@
     bus: "/icons/busz.png.png",
     tram: "/icons/villamos.png.png",
     trolley: "/icons/trolibusz.png.png",
-    hev: "/icons/hév.png.png"
+    hev: "/icons/hév.png.png",
+    vonat: "/icons/vonat.png"
   };
 
   /* 🎄 Feldíszített járművek rendszám szerint */
@@ -79,6 +80,8 @@
       model.includes("conecto") ||
       model.includes("volvo") ||
       model.includes("man")
+      model.includes("vanhool")
+      model.includes("busz")
     ) return "bus";
 
     // 🚋 Villamosok pontos szűrése (TW 6000 szóközzel!)
@@ -91,7 +94,7 @@
       model.includes("kcsv7")
     ) return "tram";
 
-    return "bus"; // minden más busz
+    return "vonat"; // minden más vonat
   }
 
 
@@ -155,3 +158,4 @@
 </script>
 </body>
 </html>
+
