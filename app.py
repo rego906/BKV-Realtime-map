@@ -2,30 +2,41 @@ from flask import Flask, jsonify, render_template, send_from_directory, abort
 import requests
 from google.transit import gtfs_realtime_pb2
 import os
+import threading
+import time
 
 # --- A PROJEKT ALAP MAPPÁJA ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # --- TEMPLATE FOLDER ÉS IKON FOLDER ---
 app = Flask(__name__, template_folder="templates")
-
-ICON_DIR = os.path.join(BASE_DIR, "icons")   # <<< EZ A FONTOS JAVÍTÁS!
+ICON_DIR = os.path.join(BASE_DIR, "icons")
 
 API_KEY = "5ad47c1d-0b29-4a6e-854e-ef21b2b76f94"
 PB_URL  = f"https://go.bkk.hu/api/query/v1/ws/gtfs-rt/full/VehiclePositions.pb?key={API_KEY}"
 TXT_URL = f"https://go.bkk.hu/api/query/v1/ws/gtfs-rt/full/VehiclePositions.txt?key={API_KEY}"
 
+# ---------------------------
+# CACHE + BACKGROUND REFRESH
+# ---------------------------
+CACHE_LOCK = threading.Lock()
+VEHICLES_CACHE = {
+    "ts": 0,
+    "data": [],
+    "ok": False,
+    "error": None
+}
+
+REFRESH_SECONDS = 30
+
 
 @app.route("/icons/<path:filename>")
 def icons(filename):
-    """Kiszolgálja az ikonokat az icons mappából."""
     candidates = [filename, filename + ".png"]
-
     for name in candidates:
         full_path = os.path.join(ICON_DIR, name)
         if os.path.exists(full_path):
             return send_from_directory(ICON_DIR, name)
-
     abort(404)
 
 
@@ -67,18 +78,15 @@ def parse_txt_feed():
     return mapping
 
 
-@app.route("/vehicles")
-def vehicles():
+def fetch_vehicles_once():
+    """Egyszeri letöltés + feldolgozás, visszaadja a listát."""
     txt_map = parse_txt_feed()
     feed = gtfs_realtime_pb2.FeedMessage()
     out = []
 
-    try:
-        r = requests.get(PB_URL, timeout=10)
-        r.raise_for_status()
-        feed.ParseFromString(r.content)
-    except Exception:
-        return jsonify([])
+    r = requests.get(PB_URL, timeout=10)
+    r.raise_for_status()
+    feed.ParseFromString(r.content)
 
     for entity in feed.entity:
         if not entity.HasField("vehicle"):
@@ -106,9 +114,59 @@ def vehicles():
             "longitude": lon
         })
 
-    return jsonify(out)
+    return out
+
+
+def refresh_loop():
+    """Háttérszál: 30 másodpercenként frissíti a cache-t."""
+    while True:
+        try:
+            data = fetch_vehicles_once()
+            with CACHE_LOCK:
+                VEHICLES_CACHE["data"] = data
+                VEHICLES_CACHE["ts"] = int(time.time())
+                VEHICLES_CACHE["ok"] = True
+                VEHICLES_CACHE["error"] = None
+        except Exception as e:
+            # Ha hiba van, a korábbi cache marad, csak jelöljük a hibát
+            with CACHE_LOCK:
+                VEHICLES_CACHE["ok"] = False
+                VEHICLES_CACHE["error"] = str(e)
+
+        time.sleep(REFRESH_SECONDS)
+
+
+@app.route("/vehicles")
+def vehicles():
+    """Mindig a memóriában lévő cache-t adja vissza (gyors)."""
+    with CACHE_LOCK:
+        return jsonify({
+            "ts": VEHICLES_CACHE["ts"],
+            "ok": VEHICLES_CACHE["ok"],
+            "error": VEHICLES_CACHE["error"],
+            "data": VEHICLES_CACHE["data"],
+        })
+
+
+def start_background_refresh():
+    t = threading.Thread(target=refresh_loop, daemon=True)
+    t.start()
 
 
 # --- Flask indítása Renderhez ---
 if __name__ == "__main__":
+    start_background_refresh()
+    # induláskor érdemes egy első frissítést is megpróbálni (ne legyen üres az oldal):
+    try:
+        first = fetch_vehicles_once()
+        with CACHE_LOCK:
+            VEHICLES_CACHE["data"] = first
+            VEHICLES_CACHE["ts"] = int(time.time())
+            VEHICLES_CACHE["ok"] = True
+            VEHICLES_CACHE["error"] = None
+    except Exception as e:
+        with CACHE_LOCK:
+            VEHICLES_CACHE["ok"] = False
+            VEHICLES_CACHE["error"] = str(e)
+
     app.run(host="0.0.0.0", port=5001, debug=True)
