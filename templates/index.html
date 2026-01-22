@@ -34,15 +34,8 @@
 
   <button id="refreshBtn">Frissítés</button>
 
-  <label class="small">
-    <input type="checkbox" id="autoRefresh" checked>
-    Automatikus frissítés (30 mp)
-  </label>
-
-  <label class="small">
-    <input type="checkbox" id="decorFilter">
-    🎄 Csak feldíszített járművek
-  </label>
+  <label class="small"><input type="checkbox" id="autoRefresh" checked> Automatikus frissítés (30 mp)</label>
+  <label class="small"><input type="checkbox" id="decorFilter"> 🎄 Csak feldíszített járművek</label>
 
   <div class="small" id="status"></div>
 </div>
@@ -50,50 +43,60 @@
 <div id="map"></div>
 
 <script>
-  // -------------------
-  // Leaflet alapok
-  // -------------------
+document.addEventListener("DOMContentLoaded", () => {
+
+  // -------- Map --------
   const map = L.map('map').setView([47.4979, 19.0402], 12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap'
-  }).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
 
-  // -------------------
-  // Állapot
-  // -------------------
-  let allVehicles = [];          // teljes dataset (cache)
-  let lastTs = 0;                // backend cache timestamp
-  const markerById = new Map();  // vehicle_id -> Leaflet marker
+  // -------- DOM --------
+  const routeFilter = document.getElementById("routeFilter");
+  const typeFilter  = document.getElementById("typeFilter");
+  const plateFilter = document.getElementById("plateFilter");
+  const refreshBtn  = document.getElementById("refreshBtn");
+  const autoRefresh = document.getElementById("autoRefresh");
+  const decorFilter = document.getElementById("decorFilter");
+  const statusEl    = document.getElementById("status");
 
-  // -------------------
-  // Ikonok
-  // -------------------
+  // -------- State --------
+  let allVehicles = [];
+  const markerById = new Map(); // id -> marker
+
+  // Ikonok: extension NÉLKÜL, mert a Flask /icons route próbálja .png-vel is
   const ICONS = {
-    bus: "/icons/busz.png.png",
-    tram: "/icons/villamos.png.png",
-    trolley: "/icons/trolibusz.png.png",
-    hev: "/icons/hév.png.png",
-    train: "/icons/vonat.png"
+    bus: "/icons/busz",
+    tram: "/icons/villamos",
+    trolley: "/icons/trolibusz",
+    hev: "/icons/hév",
+    train: "/icons/vonat"
   };
 
-  /* 🎄 Feldíszített járművek rendszám szerint */
   const DECORATED = ["V1347","V1608","V1441","V2038","V3873","V3888","V4012","V4120","V4064","JARMU1","BPI829","T9100"];
 
-  /* 🔥 Jármű osztályozás */
-  function detectMode(v) {
+  function setStatus(s){ statusEl.textContent = s; }
+
+  function uniqueSorted(arr){ return [...new Set(arr.filter(v => v && v !== "N/A"))].sort(); }
+
+  function fillSelect(sel, arr, keepSelected){
+    const prev = sel.value;
+    sel.innerHTML = "<option value=''>Összes</option>";
+    for(const v of arr){
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = v;
+      sel.appendChild(opt);
+    }
+    if(keepSelected && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+  }
+
+  function detectMode(v){
     const model = (v.vehicle_model || "").toLowerCase();
     const route = (v.route_id || "").toLowerCase();
 
-    // 🚆 Vonat
     if (model.includes("vonat") || model.includes("train") || model.includes("rail")) return "train";
-
-    // 🚈 HÉV
     if (route.startsWith("h")) return "hev";
-
-    // 🚎 Trolibusz
     if (model.includes("trol") || model.includes("trollino")) return "trolley";
 
-    // 🚌 Busz
     if (
       model.includes("volvo") ||
       model.includes("mercedes") ||
@@ -107,7 +110,6 @@
       model.includes("vanhool")
     ) return "bus";
 
-    // 🚋 Villamos
     if (
       model.includes("villamos") ||
       model.includes("tram") ||
@@ -120,69 +122,43 @@
       model.includes("kcsv7")
     ) return "tram";
 
-    // Default
     return "train";
   }
 
-  function makeIcon(url) {
-    return L.icon({ iconUrl: url, iconSize: [32,32], iconAnchor: [16,16] });
+  function makeIcon(url){
+    return L.icon({ iconUrl: url, iconSize:[32,32], iconAnchor:[16,16] });
   }
-  function iconFor(v) {
+
+  function iconFor(v){
     const mode = detectMode(v);
-    return makeIcon(ICONS[mode] || ICONS.train);
+    const url = ICONS[mode] || ICONS.train;
+    return makeIcon(url);
   }
 
-  // -------------------
-  // Segédek
-  // -------------------
-  function uniqueSorted(arr) {
-    return [...new Set(arr.filter(v => v && v !== "N/A"))].sort();
+  function popupHtml(v){
+    return `
+      <b>Viszonylat:</b> ${v.route_id}<br>
+      <b>Cél:</b> ${v.destination}<br>
+      <b>Rendszám:</b> ${v.license_plate}<br>
+      <b>Típus:</b> ${v.vehicle_model}
+    `;
   }
 
-  function fillSelect(sel, arr, keepSelected) {
-    const prev = sel.value;
-    sel.innerHTML = "<option value=''>Összes</option>";
-    arr.forEach(v => {
-      const opt = document.createElement("option");
-      opt.value = v;
-      opt.textContent = v;
-      sel.appendChild(opt);
-    });
-    if (keepSelected && [...sel.options].some(o => o.value === prev)) {
-      sel.value = prev;
-    }
-  }
-
-  function setStatus(text) {
-    document.getElementById("status").textContent = text;
-  }
-
-  // -------------------
-  // Backendből: cache-elt adat lekérés
-  // -------------------
-  async function fetchVehiclesFromServer() {
+  // -------- Fetch (sima LISTA jön /vehicles-ről) --------
+  async function fetchVehicles(){
     setStatus("Betöltés…");
+    const vehicles = await (await fetch("/vehicles", { cache: "no-store" })).json();
 
-    const payload = await (await fetch("/vehicles", { cache: "no-store" })).json();
-    // payload = { ts, ok, error, data }
+    // Debug: ha Renderen üres lenne, legalább lásd
+    const count = Array.isArray(vehicles) ? vehicles.length : 0;
+    setStatus(`Járművek: ${count}`);
 
-    if (!payload || !payload.data) {
-      setStatus("Hiba: üres válasz");
-      return { ts: 0, ok: false, error: "empty", data: [] };
-    }
-
-    const ok = payload.ok !== false;
-    const err = payload.error ? ` | hiba: ${payload.error}` : "";
-    const ts = payload.ts || 0;
-
-    setStatus(`Járművek: ${payload.data.length} | cache: ${ts}${ok ? "" : err}`);
-    return payload;
+    if(!Array.isArray(vehicles)) return [];
+    return vehicles;
   }
 
-  // -------------------
-  // Szűrés (NINCS FETCH)
-  // -------------------
-  function getFilteredVehicles() {
+  // -------- Filtering (NO fetch) --------
+  function getFiltered(){
     const r = routeFilter.value;
     const t = typeFilter.value;
     const p = plateFilter.value;
@@ -197,104 +173,91 @@
     });
   }
 
-  // -------------------
-  // Marker render: frissít / mozgat / töröl (villogás nélkül)
-  // -------------------
-  function popupHtml(v) {
-    return `
-      <b>Viszonylat:</b> ${v.route_id}<br>
-      <b>Cél:</b> ${v.destination}<br>
-      <b>Rendszám:</b> ${v.license_plate}<br>
-      <b>Típus:</b> ${v.vehicle_model}
-    `;
-  }
-
-  function renderMarkers(filtered) {
-    // melyik ID-k maradjanak
+  // -------- Render markers (villogás nélkül) --------
+  function renderMarkers(filtered){
     const keep = new Set();
 
-    for (const v of filtered) {
-      // ha nincs koordináta, kihagyjuk
-      if (typeof v.latitude !== "number" || typeof v.longitude !== "number") continue;
+    for(const v of filtered){
+      const lat = v.latitude;
+      const lon = v.longitude;
 
-      const id = v.vehicle_id || `${v.route_id}:${v.license_plate}:${v.latitude}:${v.longitude}`;
+      // biztosan szám kell
+      if (typeof lat !== "number" || typeof lon !== "number") continue;
+      if (!isFinite(lat) || !isFinite(lon)) continue;
+
+      // stabil azonosító (ha van vehicle_id, az a legjobb)
+      const id = v.vehicle_id || `${v.route_id}:${v.license_plate}`;
       keep.add(id);
 
       const existing = markerById.get(id);
-      if (existing) {
-        // mozgatás + ikon frissítés + popup frissítés
-        existing.setLatLng([v.latitude, v.longitude]);
-        existing.setIcon(iconFor(v));
+
+      if(existing){
+        existing.setLatLng([lat, lon]);
+        // próbálunk ikont frissíteni, ha valami 404, akkor is marad a marker
+        try {
+          existing.setIcon(iconFor(v));
+        } catch {}
         existing.setPopupContent(popupHtml(v));
       } else {
-        const m = L.marker([v.latitude, v.longitude], { icon: iconFor(v) })
+        // Fallback: ha ikon 404, attól még legyen marker:
+        // Leaflet akkor is létrehozza, maximum nem tölt be képet.
+        const m = L.marker([lat, lon], { icon: iconFor(v) })
           .bindPopup(popupHtml(v))
           .addTo(map);
         markerById.set(id, m);
       }
     }
 
-    // ami nincs a filtered-ben, azt levesszük
-    for (const [id, m] of markerById.entries()) {
-      if (!keep.has(id)) {
+    // töröljük ami nincs már benne
+    for(const [id, m] of markerById.entries()){
+      if(!keep.has(id)){
         map.removeLayer(m);
         markerById.delete(id);
       }
     }
   }
 
-  function populateFiltersFromAll(keepSelected = true) {
-    fillSelect(routeFilter, uniqueSorted(allVehicles.map(v => v.route_id)), keepSelected);
-    fillSelect(typeFilter, uniqueSorted(allVehicles.map(v => v.vehicle_model)), keepSelected);
-    fillSelect(plateFilter, uniqueSorted(allVehicles.map(v => v.license_plate)), keepSelected);
+  function populateFilters(keep=true){
+    fillSelect(routeFilter, uniqueSorted(allVehicles.map(v => v.route_id)), keep);
+    fillSelect(typeFilter,  uniqueSorted(allVehicles.map(v => v.vehicle_model)), keep);
+    fillSelect(plateFilter, uniqueSorted(allVehicles.map(v => v.license_plate)), keep);
   }
 
-  // -------------------
-  // UI események
-  // -------------------
-  function applyFiltersAndRender() {
-    const filtered = getFilteredVehicles();
+  function applyFiltersOnly(){
+    const filtered = getFiltered();
     renderMarkers(filtered);
   }
 
-  // teljes frissítés: adat letölt + filter opciók frissít + render (aktuális szűrőkkel)
-  async function refreshDataFromServer() {
-    const payload = await fetchVehiclesFromServer();
+  // -------- Full refresh (fetch + update filters + render) --------
+  async function refreshFromServer(){
+    const vehicles = await fetchVehicles();
+    allVehicles = vehicles;
 
-    // csak ha változott a cache ts, akkor cseréljük az adatot
-    // (ha szeretnéd mindig cserélni, vedd ki ezt a feltételt)
-    if (payload.ts && payload.ts === lastTs && allVehicles.length) {
-      // nincs új adat, de a szűrést újra lefuttathatjuk
-      applyFiltersAndRender();
-      return;
-    }
+    populateFilters(true);
+    applyFiltersOnly();
 
-    allVehicles = payload.data || [];
-    lastTs = payload.ts || 0;
-
-    populateFiltersFromAll(true);
-    applyFiltersAndRender();
+    // ha minden oké, de még sincs marker: írjuk ki mennyi volt szűrés után
+    const filteredCount = getFiltered().length;
+    setStatus(`Járművek: ${allVehicles.length} | Szűrve: ${filteredCount}`);
   }
 
-  // -------------------
-  // Inicializálás
-  // -------------------
-  // Szűrők: CSAK helyi szűrés, NINCS fetch
-  routeFilter.onchange = applyFiltersAndRender;
-  typeFilter.onchange  = applyFiltersAndRender;
-  plateFilter.onchange = applyFiltersAndRender;
-  decorFilter.onchange = applyFiltersAndRender;
+  // -------- Events: szűrők NEM fetch-elnek --------
+  routeFilter.addEventListener("change", applyFiltersOnly);
+  typeFilter.addEventListener("change", applyFiltersOnly);
+  plateFilter.addEventListener("change", applyFiltersOnly);
+  decorFilter.addEventListener("change", applyFiltersOnly);
 
-  // Gomb: szerverről frissít
-  refreshBtn.onclick = refreshDataFromServer;
+  refreshBtn.addEventListener("click", refreshFromServer);
 
-  // első betöltés
-  refreshDataFromServer();
+  // start
+  refreshFromServer();
 
-  // Auto refresh: 30 mp, de szűrőt nem resetel
+  // auto refresh 30 mp
   setInterval(() => {
-    if (autoRefresh.checked) refreshDataFromServer();
+    if(autoRefresh.checked) refreshFromServer();
   }, 30000);
+
+});
 </script>
 
 </body>
